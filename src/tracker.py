@@ -1,4 +1,6 @@
 from PyQt5 import QtWidgets, QtCore
+from PyQt5.QtGui import QIcon
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu
 import datetime
 from db import WorkSessionDB
 from exporter import export_to_excel
@@ -13,9 +15,11 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.end_time = None
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update_time)
+        self.tray_icon = None
 
         # UI elements
         self.init_ui()
+        self.init_tray_icon()
 
     def init_ui(self):
         # Set up the UI for session tracking
@@ -44,6 +48,45 @@ class TimeTrackerApp(QtWidgets.QWidget):
         layout.addWidget(self.stop_button)
         layout.addWidget(self.export_button)
         self.setLayout(layout)
+
+    def init_tray_icon(self):
+        """Initialize the system tray icon and menu."""
+        self.tray_icon = QSystemTrayIcon(QIcon("resources/tray.ico"), self)
+        tray_menu = QMenu()
+
+        start_action = tray_menu.addAction("Start Session")
+        stop_action = tray_menu.addAction("Stop Session")
+        restore_action = tray_menu.addAction("Restore")
+
+        start_action.triggered.connect(self.start_session)
+        stop_action.triggered.connect(self.stop_session)
+        restore_action.triggered.connect(self.restore_from_tray)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+        self.tray_icon.show()
+
+    def minimize_to_tray(self):
+        """Minimize the application to the system tray."""
+        self.hide()
+
+    def restore_from_tray(self):
+        """Restore the application from the system tray."""
+        self.show()
+        self.raise_()
+
+    def on_tray_icon_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.Trigger:
+            self.restore_from_tray()
+
+    def changeEvent(self, event):
+        """Override change event to minimize to tray when minimized."""
+        if event.type() == QtCore.QEvent.WindowStateChange and self.isMinimized():
+            self.minimize_to_tray()
+            event.ignore()
+        else:
+            super().changeEvent(event)
 
     def start_session(self):
         """ Start the session """
