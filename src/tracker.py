@@ -2,9 +2,6 @@ from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QSystemTrayIcon, QMenu
 import datetime
-from db import WorkSessionDB
-from exporter import export_to_excel
-from config import Config
 import threading
 import time
 import ctypes
@@ -17,7 +14,7 @@ from exporter import handle_excel_export
 
 
 class TimeTrackerApp(QtWidgets.QWidget):
-    def __init__(self, db):
+    def __init__(self, db, cfg):
         super().__init__()
         self.db = db  # WorkSessionDB instance for database access
         self.start_time = None
@@ -33,7 +30,12 @@ class TimeTrackerApp(QtWidgets.QWidget):
 
         # UI elements
         self.init_ui()
-        self.init_tray_icon()
+        # Check if the app shall start minimized
+        self.cfg = cfg
+        if self.cfg.get("minimized", True):
+            QtCore.QTimer.singleShot(0, self.minimize_to_tray)
+            # start session automatically on minimized startup
+            self.start_session()
 
     def init_ui(self):
         # Set up the UI for session tracking
@@ -63,31 +65,47 @@ class TimeTrackerApp(QtWidgets.QWidget):
         layout.addWidget(self.export_button)
         self.setLayout(layout)
 
-    def init_tray_icon(self):
-        """Initialize the system tray icon and menu."""
-        self.tray_icon = QSystemTrayIcon(QIcon("resources/tray.ico"), self)
-        tray_menu = QMenu()
+    def export_to_excel(self):
+        """Handle exporting session data to Excel."""
+        handle_excel_export(self.db, self.cfg)
 
-        start_action = tray_menu.addAction("Start Session")
-        stop_action = tray_menu.addAction("Stop Session")
-        restore_action = tray_menu.addAction("Restore")
+    def update_tray_menu(self):
+        if self.tray_icon:
+            tray_menu = QMenu()
+            start_action = tray_menu.addAction("Start Session")
+            start_action.setEnabled(self.start_button.isEnabled())
+            stop_action = tray_menu.addAction("Stop Session")
+            stop_action.setEnabled(self.stop_button.isEnabled())
+            restore_action = tray_menu.addAction("Restore")
+            Close_action = tray_menu.addAction("Close")
 
-        start_action.triggered.connect(self.start_session)
-        stop_action.triggered.connect(self.stop_session)
-        restore_action.triggered.connect(self.restore_from_tray)
+            start_action.triggered.connect(self.start_session)
+            stop_action.triggered.connect(self.stop_session)
+            restore_action.triggered.connect(self.restore_from_tray)
+            Close_action.triggered.connect(self.exit_app)
 
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.activated.connect(self.on_tray_icon_activated)
-        self.tray_icon.show()
+            self.tray_icon.setContextMenu(tray_menu)
 
     def minimize_to_tray(self):
         """Minimize the application to the system tray."""
         self.hide()
+        self.cfg.set("minimized", True)
+        if not self.tray_icon:
+            self.tray_icon = QSystemTrayIcon(QIcon("resources/tray.ico"), self)
+            self.tray_icon.setToolTip("Time Tracker - Minimized to Tray")
+            self.update_tray_menu()
+            self.tray_icon.activated.connect(self.on_tray_icon_activated)
+        self.tray_icon.show()
 
     def restore_from_tray(self):
         """Restore the application from the system tray."""
         self.show()
         self.raise_()
+        self.activateWindow()
+        self.showNormal()
+        if self.tray_icon:
+            self.tray_icon.hide()
+        self.cfg.set("minimized", False)
 
     def on_tray_icon_activated(self, reason):
         """Handle tray icon activation."""
@@ -106,21 +124,36 @@ class TimeTrackerApp(QtWidgets.QWidget):
     def start_session(self):
         """ Start the session """
         self.start_time = datetime.datetime.now()
-        self.timer.start(1000)  # Update every second
+        self.timer.start(1000)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.update_tray_menu()
 
     @QtCore.pyqtSlot()
     def stop_session(self):
         """ Stop the session and save data """
-        self.end_time = datetime.datetime.now()
-        total_seconds = int((self.end_time - self.start_time).total_seconds())  # Round down to the nearest second
-        # Log the session to the database (store duration in seconds)
-        self.db.add_session(self.start_time, self.end_time, total_seconds)
-        # Stop the timer and reset buttons
-        self.timer.stop()
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        if self.start_time is not None:
+            self.end_time = datetime.datetime.now()
+            total_seconds = int((self.end_time - self.start_time).total_seconds())
+            # Log the session to the database (store duration in seconds)
+            self.db.add_session(self.start_time, self.end_time, total_seconds)
+            # Stop the timer and reset buttons
+            self.timer.stop()
+            self.start_time = None
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            self.update_tray_menu()
+
+    @QtCore.pyqtSlot()
+    def exit_app(self):
+        """Exit the application gracefully."""
+        # Stop the session
+        self.stop_session()
+        # Close the tray icon if it exists
+        if self.tray_icon:
+            self.tray_icon.hide()
+        # Close the application
+        QtWidgets.QApplication.quit()
 
     def update_time(self):
         """ Update the UI with the current time """
@@ -129,20 +162,6 @@ class TimeTrackerApp(QtWidgets.QWidget):
             hours, remainder = divmod(elapsed_time.total_seconds(), 3600)
             minutes, seconds = divmod(remainder, 60)
             self.duration_label.setText(f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}")
-
-    def export_to_excel(self):
-        """ Handle exporting session data to Excel """
-        # Open file dialog to choose the Excel file
-        config = Config()
-        excel_path = config.get('excel_path', '')
-        options = QtWidgets.QFileDialog.Options()
-        excel_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select Excel File', excel_path, 'Excel Files (*.xlsx;*.xlsm)', options=options)
-
-        if excel_file:
-            config.set('excel_path', excel_file)
-            """ Open a dialog window for configuring the export settings """
-            dialog = ExportConfigDialog(excel_file, self.db, config)
-            dialog.exec_()
 
     def get_idle_duration(self):
         """Get the duration of user inactivity in seconds."""
@@ -221,85 +240,7 @@ class TimeTrackerApp(QtWidgets.QWidget):
 
         threading.Thread(target=monitor, daemon=True).start()
 
-
-class ExportConfigDialog(QtWidgets.QDialog):
-    def __init__(self, excel_file, db, cfg, parent=None):
-        super().__init__(parent)
-        self.excel_file = excel_file
-        self.db = db
-        self.config = cfg
-
-        self.setWindowTitle("Export Configuration")
-
-        # Initialize UI elements for exporting
-        self.sheet_name_combo = QtWidgets.QComboBox(self)
-        self.sheet_name_combo.addItems(self.get_sheet_names())
-
-        self.date_cell_input = QtWidgets.QLineEdit(self)
-        self.start_cell_input = QtWidgets.QLineEdit(self)
-        self.end_cell_input = QtWidgets.QLineEdit(self)
-        self.duration_cell_input = QtWidgets.QLineEdit(self)
-
-        # Set default values based on previous config or empty
-        default_sheet = self.config.get('wb_sheet', '')
-        if default_sheet:
-            self.sheet_name_combo.setCurrentText(default_sheet)
-        self.date_cell_input.setText(self.config.get('date_cell', 'A1'))
-        self.start_cell_input.setText(self.config.get('start_cell', 'B1'))
-        self.end_cell_input.setText(self.config.get('end_cell', 'C1'))
-        self.duration_cell_input.setText(self.config.get('duration_cell', 'D1'))
-
-        self.date_based_check = QtWidgets.QCheckBox("date-based export", self)
-        self.date_based_check.setChecked(self.config.get('date_based', True))
-
-        self.save_button = QtWidgets.QPushButton('Save', self)
-        self.cancel_button = QtWidgets.QPushButton('Cancel', self)
-
-        self.save_button.clicked.connect(self.save_export_settings)
-        self.cancel_button.clicked.connect(self.reject)
-
-        # Layout setup
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(QtWidgets.QLabel("Select Sheet:"))
-        layout.addWidget(self.sheet_name_combo)
-        layout.addWidget(QtWidgets.QLabel("Date Cell:"))
-        layout.addWidget(self.date_cell_input)
-        layout.addWidget(QtWidgets.QLabel("Start Cell:"))
-        layout.addWidget(self.start_cell_input)
-        layout.addWidget(QtWidgets.QLabel("End Cell:"))
-        layout.addWidget(self.end_cell_input)
-        layout.addWidget(QtWidgets.QLabel("Duration Cell:"))
-        layout.addWidget(self.duration_cell_input)
-        layout.addWidget(self.date_based_check)
-        layout.addWidget(self.save_button)
-        layout.addWidget(self.cancel_button)
-
-        self.setLayout(layout)
-
-    def get_sheet_names(self):
-        """ Get sheet names from the Excel file """
-        import openpyxl
-        workbook = openpyxl.load_workbook(self.excel_file)
-        return workbook.sheetnames
-
-    def save_export_settings(self):
-        """ Save the export settings and perform the export """
-        sheet_name = self.sheet_name_combo.currentText()
-        date_cell = self.date_cell_input.text()
-        start_cell = self.start_cell_input.text()
-        end_cell = self.end_cell_input.text()
-        duration_cell = self.duration_cell_input.text()
-        date_based = self.date_based_check.isChecked()
-
-        # Save these settings to config for future use
-        self.config.set('wb_sheet', sheet_name)
-        self.config.set('date_cell', date_cell)
-        self.config.set('start_cell', start_cell)
-        self.config.set('end_cell', end_cell)
-        self.config.set('duration_cell', duration_cell)
-        self.config.set('date_based', date_based)
-
-        # Export to Excel
-        export_to_excel(self.excel_file, sheet_name, date_cell, start_cell, end_cell, duration_cell, date_based, self.db)
-
-        self.accept()  # Close the dialog after saving
+    def closeEvent(self, event):
+        """Handle the close button (X) to call exit_app."""
+        self.exit_app()
+        event.accept()  # Accept the event to close the application

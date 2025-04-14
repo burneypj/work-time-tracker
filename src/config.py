@@ -14,7 +14,9 @@ class Config:
             "end_cell": "C1",
             "duration_cell": "D1",
             "date_based_export": True,
-            "excel_path": ''
+            "excel_path": '',
+            "db_path": '',
+            "minimized": True
         }
         self.load()
 
