@@ -9,6 +9,11 @@ import threading
 import time
 import ctypes
 import ctypes.wintypes
+import win32con
+import win32gui
+import win32ts
+from db import WorkSessionDB
+from exporter import handle_excel_export
 
 
 class TimeTrackerApp(QtWidgets.QWidget):
@@ -22,7 +27,9 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.tray_icon = None
         self.idle_threshold = 300  # 5 minutes
         self.session_was_stopped_due_to_idle = False
+        self.session_was_stopped_due_to_lock = False
         self.start_inactivity_monitor()
+        self.register_session_monitor()
 
         # UI elements
         self.init_ui()
@@ -163,6 +170,54 @@ class TimeTrackerApp(QtWidgets.QWidget):
                         QtCore.QMetaObject.invokeMethod(self, "start_session", QtCore.Qt.QueuedConnection)
                         self.session_was_stopped_due_to_idle = False
                 time.sleep(5)
+
+        threading.Thread(target=monitor, daemon=True).start()
+
+    def register_session_monitor(self):
+        """Register a hidden window to monitor Windows lock/unlock events."""
+        def monitor():
+            WNDPROCTYPE = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.c_uint, ctypes.c_int, ctypes.c_int)
+
+            def wnd_proc(hwnd, msg, wparam, lparam):
+                if msg == 0x02B1:  # WM_WTSSESSION_CHANGE
+                    if wparam == 0x7:  # WTS_SESSION_LOCK
+                        if self.start_time is not None:
+                            QtCore.QMetaObject.invokeMethod(self, "stop_session", QtCore.Qt.QueuedConnection)
+                            self.session_was_stopped_due_to_lock = True
+                    elif wparam == 0x8:  # WTS_SESSION_UNLOCK
+                        if self.session_was_stopped_due_to_lock:
+                            QtCore.QMetaObject.invokeMethod(self, "start_session", QtCore.Qt.QueuedConnection)
+                            self.session_was_stopped_due_to_lock = False
+
+                elif msg == win32con.WM_QUERYENDSESSION:
+                    # System is shutting down or user is logging off
+                    QtCore.QMetaObject.invokeMethod(self, "exit_app", QtCore.Qt.QueuedConnection)
+                    return True  # Allow shutdown to continue
+
+                elif msg == win32con.WM_ENDSESSION:
+                    return 0
+
+                elif msg == win32con.WM_DESTROY:
+                    ctypes.windll.wtsapi32.WTSUnRegisterSessionNotification(hwnd)
+                    ctypes.windll.user32.PostQuitMessage(0)
+
+                return ctypes.windll.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            hInstance = ctypes.windll.kernel32.GetModuleHandleW(None)
+            className = "HiddenWindowClass_TimeTracker"
+
+            wndClass = win32gui.WNDCLASS()
+            wndClass.lpfnWndProc = WNDPROCTYPE(wnd_proc)
+            wndClass.hInstance = hInstance
+            wndClass.lpszClassName = className
+            try:
+                win32gui.RegisterClass(wndClass)
+            except Exception:
+                pass
+
+            hwnd = win32gui.CreateWindow(className, className, 0, 0, 0, 0, 0, 0, 0, hInstance, None)
+            ctypes.windll.wtsapi32.WTSRegisterSessionNotification(hwnd, win32ts.NOTIFY_FOR_THIS_SESSION)
+            win32gui.PumpMessages()
 
         threading.Thread(target=monitor, daemon=True).start()
 
