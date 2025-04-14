@@ -31,6 +31,15 @@ class WorkSessionDB:
         self.cursor.execute(query)
         return self.cursor.fetchall()
 
+    def get_last_session(self):
+        """Retrieve the last saved work session from the database."""
+        query = '''SELECT start_time, end_time, duration
+                   FROM work_sessions
+                   ORDER BY id DESC
+                   LIMIT 1'''
+        self.cursor.execute(query)
+        return self.cursor.fetchone()
+
     def close(self):
         """Close the database connection."""
         self.conn.close()

@@ -42,6 +42,8 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.setWindowTitle('Time Tracker')
         self.setGeometry(100, 100, 300, 200)
 
+        self.month_change_checked = False
+
         self.start_button = QtWidgets.QPushButton('Start', self)
         self.stop_button = QtWidgets.QPushButton('Stop', self)
         self.export_button = QtWidgets.QPushButton('Export to Excel', self)
@@ -128,6 +130,9 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.update_tray_menu()
+        if not self.month_change_checked:
+            self.check_Month_Change()
+            self.month_change_checked = True
 
     @QtCore.pyqtSlot()
     def stop_session(self):
@@ -239,6 +244,25 @@ class TimeTrackerApp(QtWidgets.QWidget):
             win32gui.PumpMessages()
 
         threading.Thread(target=monitor, daemon=True).start()
+
+    def check_Month_Change(self):
+        """Check if the month has changed since the last session."""
+        sessions = self.db.get_last_session()
+        if sessions:
+            # Extract last session month
+            last_session_month = datetime.datetime.fromisoformat(sessions[0]).month
+            # Check if the month has changed
+            if last_session_month != datetime.datetime.now().month:
+                # Open a popup with an Export to Excel button
+                msg_box = QtWidgets.QMessageBox(self)
+                msg_box.setIcon(QtWidgets.QMessageBox.Information)
+                msg_box.setWindowTitle("Month Change Detected")
+                msg_box.setText("The month has changed. Would you like to export the time data?")
+                export_button = msg_box.addButton("Export to Excel", QtWidgets.QMessageBox.AcceptRole)
+                msg_box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
+                msg_box.exec_()
+                if msg_box.clickedButton() == export_button:
+                    handle_excel_export(self.db)
 
     def closeEvent(self, event):
         """Handle the close button (X) to call exit_app."""
