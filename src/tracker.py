@@ -5,6 +5,10 @@ import datetime
 from db import WorkSessionDB
 from exporter import export_to_excel
 from config import Config
+import threading
+import time
+import ctypes
+import ctypes.wintypes
 
 
 class TimeTrackerApp(QtWidgets.QWidget):
@@ -16,6 +20,9 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update_time)
         self.tray_icon = None
+        self.idle_threshold = 300  # 5 minutes
+        self.session_was_stopped_due_to_idle = False
+        self.start_inactivity_monitor()
 
         # UI elements
         self.init_ui()
@@ -88,6 +95,7 @@ class TimeTrackerApp(QtWidgets.QWidget):
         else:
             super().changeEvent(event)
 
+    @QtCore.pyqtSlot()
     def start_session(self):
         """ Start the session """
         self.start_time = datetime.datetime.now()
@@ -95,6 +103,7 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
 
+    @QtCore.pyqtSlot()
     def stop_session(self):
         """ Stop the session and save data """
         self.end_time = datetime.datetime.now()
@@ -127,6 +136,35 @@ class TimeTrackerApp(QtWidgets.QWidget):
             """ Open a dialog window for configuring the export settings """
             dialog = ExportConfigDialog(excel_file, self.db, config)
             dialog.exec_()
+
+    def get_idle_duration(self):
+        """Get the duration of user inactivity in seconds."""
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.wintypes.UINT), ("dwTime", ctypes.wintypes.DWORD)]
+
+        lii = LASTINPUTINFO()
+        lii.cbSize = ctypes.sizeof(lii)
+        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+            millis = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
+            return millis / 1000.0
+        return 0
+
+    def start_inactivity_monitor(self):
+        """Start a thread to monitor user inactivity."""
+        def monitor():
+            while True:
+                idle_time = self.get_idle_duration()
+                if idle_time >= self.idle_threshold:
+                    if self.start_time is not None and not self.session_was_stopped_due_to_idle:
+                        QtCore.QMetaObject.invokeMethod(self, "stop_session", QtCore.Qt.QueuedConnection)
+                        self.session_was_stopped_due_to_idle = True
+                elif idle_time < 2:
+                    if self.session_was_stopped_due_to_idle:
+                        QtCore.QMetaObject.invokeMethod(self, "start_session", QtCore.Qt.QueuedConnection)
+                        self.session_was_stopped_due_to_idle = False
+                time.sleep(5)
+
+        threading.Thread(target=monitor, daemon=True).start()
 
 
 class ExportConfigDialog(QtWidgets.QDialog):
