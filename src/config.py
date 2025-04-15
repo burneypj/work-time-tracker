@@ -16,7 +16,7 @@ class Config:
             "date_based_export": True,
             "excel_path": '',
             "db_path": '',
-            "minimized": True
+            "minimized": False
         }
         self.load()
 
@@ -45,3 +45,11 @@ class Config:
                     self.settings.update(json.load(config_file))
             except Exception as e:
                 print(f"Error loading config: {e}")
+
+    def delete(self):
+        """ Delete the configuration file """
+        if os.path.exists(self.CONFIG_FILE):
+            try:
+                os.remove(self.CONFIG_FILE)
+            except Exception as e:
+                print(f"Error deleting config: {e}")

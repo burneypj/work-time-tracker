@@ -1,4 +1,5 @@
 import sqlite3
+import os
 
 class WorkSessionDB:
     def __init__(self, db_path):
@@ -45,6 +46,15 @@ class WorkSessionDB:
                    LIMIT 1'''
         self.cursor.execute(query)
         return self.cursor.fetchone()
+
+    def delete(self):
+        """Delete the database file."""
+        self.close()
+        if os.path.exists(self.db_path):
+            try:
+                os.remove(self.db_path)
+            except Exception as e:
+                print(f"Error deleting database: {e}")
 
     def close(self):
         """Close the database connection."""
