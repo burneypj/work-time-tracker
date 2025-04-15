@@ -32,6 +32,11 @@ The **work-time-tracker (wtt)** is a desktop application built using Python and 
 6. **Configuration Management**:
    - Save and load user preferences, such as export settings and database paths, using a JSON configuration file.
 
+7. **Reset Functionality**:
+   - A **Reset** button allows users to delete all session data and configuration files.
+   - Displays a confirmation dialog before proceeding.
+   - Closes the application after resetting.
+
 ---
 
 ## File Structure
@@ -42,7 +47,7 @@ The **work-time-tracker (wtt)** is a desktop application built using Python and 
 
 ### 2. **`tracker.py`**
    - Contains the `TimeTrackerApp` class, which manages the main application logic.
-   - Handles session tracking, inactivity monitoring, and system tray integration.
+   - Handles session tracking, inactivity monitoring, system tray integration, and reset functionality.
 
 ### 3. **`db.py`**
    - Contains the `WorkSessionDB` class for managing the SQLite database.

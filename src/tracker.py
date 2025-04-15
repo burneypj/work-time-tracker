@@ -47,6 +47,7 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.start_button = QtWidgets.QPushButton('Start', self)
         self.stop_button = QtWidgets.QPushButton('Stop', self)
         self.export_button = QtWidgets.QPushButton('Export to Excel', self)
+        self.reset_button = QtWidgets.QPushButton('Reset', self)
 
         # Add a label to display the running duration
         self.duration_label = QtWidgets.QLabel("Duration: 00:00:00", self)
@@ -55,6 +56,9 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.start_button.clicked.connect(self.start_session)
         self.stop_button.clicked.connect(self.stop_session)
         self.export_button.clicked.connect(self.export_to_excel)
+        self.reset_button.clicked.connect(self.reset_app)
+        self.reset_button.setStyleSheet("font-size: 12px; color: red;")
+        self.reset_button.setFixedSize(80, 30)
 
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
@@ -65,6 +69,7 @@ class TimeTrackerApp(QtWidgets.QWidget):
         layout.addWidget(self.start_button)
         layout.addWidget(self.stop_button)
         layout.addWidget(self.export_button)
+        layout.addWidget(self.reset_button)  # Add the Reset button to the layout
         self.setLayout(layout)
 
     def export_to_excel(self):
@@ -268,3 +273,23 @@ class TimeTrackerApp(QtWidgets.QWidget):
         """Handle the close button (X) to call exit_app."""
         self.exit_app()
         event.accept()  # Accept the event to close the application
+
+    def reset_app(self):
+        """Reset the application by deleting the session database and config file."""
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Confirm Reset",
+            "This will delete all session data and configurations. Are you sure?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        if reply == QtWidgets.QMessageBox.Yes:
+            # stop running timers
+            self.timer.stop()
+            # delete the database connection
+            self.db.delete()  # Ensure the database is closed before deletion
+            # Delete the configuration file
+            self.cfg.delete()
+            # Exit the application
+            QtWidgets.QMessageBox.information(self, "Reset Complete", "The application will now exit.")
+            QtWidgets.QApplication.quit()
