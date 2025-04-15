@@ -11,8 +11,8 @@ class ExportConfigDialog(QtWidgets.QDialog):
         self.excel_file = excel_file
         self.db = db
         self.config = cfg
-        self.workbook = None  # To hold the opened workbook
-        self.app = None  # To hold the xlwings app instance
+        self.workbook = None
+        self.app = None
 
         self.setWindowTitle("Export Configuration")
 
@@ -25,6 +25,10 @@ class ExportConfigDialog(QtWidgets.QDialog):
         self.end_cell_input = QtWidgets.QLineEdit(self)
         self.duration_cell_input = QtWidgets.QLineEdit(self)
 
+        # Add a starting date input
+        self.start_date_input = QtWidgets.QDateEdit(self)
+        self.start_date_input.setCalendarPopup(True)
+        self.start_date_input.setDate(datetime.now().date())
         # Set default values based on previous config or empty
         default_sheet = self.config.get('wb_sheet', '')
         if default_sheet:
@@ -47,6 +51,8 @@ class ExportConfigDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel("Select Sheet:"))
         layout.addWidget(self.sheet_name_combo)
+        layout.addWidget(QtWidgets.QLabel("Starting Date:"))
+        layout.addWidget(self.start_date_input)
         layout.addWidget(QtWidgets.QLabel("Date Cell:"))
         layout.addWidget(self.date_cell_input)
         layout.addWidget(QtWidgets.QLabel("Start Cell:"))
@@ -80,6 +86,7 @@ class ExportConfigDialog(QtWidgets.QDialog):
         end_cell = self.end_cell_input.text()
         duration_cell = self.duration_cell_input.text()
         date_based = self.date_based_check.isChecked()
+        start_date = self.start_date_input.date().toPyDate()
 
         # Save these settings to config for future use
         self.config.set('wb_sheet', sheet_name)
@@ -90,13 +97,14 @@ class ExportConfigDialog(QtWidgets.QDialog):
         self.config.set('date_based', date_based)
 
         # Export to Excel
-        self.write_to_excel(sheet_name, date_cell, start_cell, end_cell, duration_cell, date_based)
+        self.write_to_excel(sheet_name, date_cell, start_cell, end_cell, duration_cell, date_based, start_date)
         self.close_excel()
         self.accept()  # Close the dialog after saving
 
-    def write_to_excel(self, sheet_name, date_cell, start_cell, end_cell, duration_cell, date_based):
+    def write_to_excel(self, sheet_name, date_cell, start_cell, end_cell, duration_cell, date_based, start_date):
         """Export session data to an Excel file."""
-        sessions = self.db.get_sessions()
+        # Pass the start_date to get_sessions
+        sessions = self.db.get_sessions(start_date=start_date if start_date else None)
 
         if date_based:
             data = self.format_date_based_data(sessions)
@@ -139,8 +147,9 @@ class ExportConfigDialog(QtWidgets.QDialog):
         return formatted
 
     def format_date_based_data(self, sessions):
-        """Format the data for date-based export."""
+        """Format the data for date-based export, including placeholders for missing dates."""
         from collections import defaultdict
+        from datetime import timedelta
 
         # Group sessions by date
         grouped_sessions = defaultdict(list)
@@ -151,16 +160,29 @@ class ExportConfigDialog(QtWidgets.QDialog):
             date = start_time.date().isoformat()
             grouped_sessions[date].append((start_time, end_time, duration_seconds))
 
+        # Determine the full date range
+        if sessions:
+            first_date = datetime.fromisoformat(sessions[0][0]).date()
+            last_date = datetime.fromisoformat(sessions[-1][0]).date()
+        else:
+            return []  # No sessions, return an empty list
+
+        # Generate all dates in the range
+        all_dates = [first_date + timedelta(days=i) for i in range((last_date - first_date).days + 1)]
+
         formatted_data = []
-        for date, daily_sessions in grouped_sessions.items():
-            # Skip rows with missing dates
-            if not date:
-                continue
-            # Find the earliest start time, latest end time, and sum durations
-            earliest_start = min(session[0] for session in daily_sessions)
-            latest_end = max(session[1] for session in daily_sessions)
-            total_duration = format_duration(sum(session[2] for session in daily_sessions))
-            formatted_data.append((date, earliest_start.strftime("%H:%M:%S"), latest_end.strftime("%H:%M:%S"), total_duration))
+        for date in all_dates:
+            date_str = date.isoformat()
+            if date_str in grouped_sessions:
+                # Process sessions for the date
+                daily_sessions = grouped_sessions[date_str]
+                earliest_start = min(session[0] for session in daily_sessions)
+                latest_end = max(session[1] for session in daily_sessions)
+                total_duration = format_duration(sum(session[2] for session in daily_sessions))
+                formatted_data.append((date_str, earliest_start.strftime("%H:%M:%S"), latest_end.strftime("%H:%M:%S"), total_duration))
+            else:
+                # Add a placeholder for missing dates
+                formatted_data.append((date_str, "", "", ""))
 
         return formatted_data
 

@@ -25,10 +25,16 @@ class WorkSessionDB:
         self.cursor.execute(query, (start_time, end_time, duration))
         self.conn.commit()
 
-    def get_sessions(self):
-        """Retrieve all work sessions from the database."""
-        query = '''SELECT start_time, end_time, duration FROM work_sessions'''
-        self.cursor.execute(query)
+    def get_sessions(self, start_date=None):
+        """Retrieve work sessions from the database, optionally starting from a specific date."""
+        if start_date:
+            query = '''SELECT start_time, end_time, duration
+                       FROM work_sessions
+                       WHERE DATE(start_time) >= ?'''
+            self.cursor.execute(query, (start_date.isoformat(),))
+        else:
+            query = '''SELECT start_time, end_time, duration FROM work_sessions'''
+            self.cursor.execute(query)
         return self.cursor.fetchall()
 
     def get_last_session(self):
