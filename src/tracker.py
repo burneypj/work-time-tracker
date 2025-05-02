@@ -32,6 +32,11 @@ class TimeTrackerApp(QtWidgets.QWidget):
         self.init_ui()
         # Check if the app shall start minimized
         self.cfg = cfg
+        # Check for daily limit in config
+        self.daily_limit = self.cfg.get("daily_limit")
+        if self.daily_limit is None:
+            self.daily_limit = self.prompt_for_daily_limit()  # Ask the user for the daily limit
+            self.cfg.set("daily_limit", self.daily_limit)  # Save it to the config
         if self.cfg.get("minimized", True):
             QtCore.QTimer.singleShot(0, self.minimize_to_tray)
             # start session automatically on minimized startup
@@ -129,8 +134,10 @@ class TimeTrackerApp(QtWidgets.QWidget):
 
     @QtCore.pyqtSlot()
     def start_session(self):
-        """ Start the session """
+        """Start the session."""
         self.start_time = datetime.datetime.now()
+        self.total_time_today = self.get_total_time_today()  # Calculate total time for the day
+        self.daily_limit_exceeded = False  # Reset the daily limit flag
         self.timer.start(1000)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -166,12 +173,13 @@ class TimeTrackerApp(QtWidgets.QWidget):
         QtWidgets.QApplication.quit()
 
     def update_time(self):
-        """ Update the UI with the current time """
+        """Update the UI with the current time and check daily limit."""
         if self.start_time:
             elapsed_time = datetime.datetime.now() - self.start_time
             hours, remainder = divmod(elapsed_time.total_seconds(), 3600)
             minutes, seconds = divmod(remainder, 60)
             self.duration_label.setText(f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}")
+            self.check_daily_limit()  # Check if the daily limit is exceeded
 
     def get_idle_duration(self):
         """Get the duration of user inactivity in seconds."""
@@ -293,3 +301,101 @@ class TimeTrackerApp(QtWidgets.QWidget):
             # Exit the application
             QtWidgets.QMessageBox.information(self, "Reset Complete", "The application will now exit.")
             QtWidgets.QApplication.quit()
+
+    def get_total_time_today(self):
+        """Calculate the total session time for the current day."""
+        today = datetime.datetime.now().date()
+        sessions = self.db.get_sessions(today)
+        total_seconds = sum(int(session[2]) for session in sessions)
+        return total_seconds
+
+    def check_daily_limit(self):
+        """Check if the total duration for the day exceeds 8 hours."""
+        if self.start_time:
+            elapsed_time = datetime.datetime.now() - self.start_time
+            elapsed_seconds = elapsed_time.total_seconds()
+        else:
+            elapsed_seconds = 0
+
+        total_time_today = self.total_time_today + elapsed_seconds
+        if total_time_today >= self.daily_limit and not self.daily_limit_exceeded:
+            self.daily_limit_exceeded = True
+            hours, remainder = divmod(total_time_today, 3600)
+            minutes, _ = divmod(remainder, 60)
+        # Show a system tray notification instead of a message box
+            if self.tray_icon:
+                self.tray_icon.showMessage(
+                    "Daily Limit Exceeded",
+                    f"Warning: You have worked for {int(hours)} hours and {int(minutes)} minutes today. "
+                    "Consider taking a break!",
+                    QSystemTrayIcon.Warning,
+                    5000  # Duration in milliseconds
+                )
+            else:
+                msg_box = QtWidgets.QMessageBox()
+                msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+                msg_box.setWindowTitle("Daily Limit Exceeded")
+                msg_box.setText(
+                    f"Warning: You have worked for {int(hours)} hours and {int(minutes)} minutes today. "
+                    "Consider taking a break!"
+                )
+                msg_box.addButton("OK", QtWidgets.QMessageBox.AcceptRole)
+                msg_box.exec_()
+            # Add 30 minutes to the daily limit and reset the flag
+            self.daily_limit += 1800  # Increase limit by 30 minutes
+            self.daily_limit_exceeded = False  # Reset the flag for the next check
+
+    def prompt_for_daily_limit(self):
+        """Prompt the user to input the daily limit in hours and minutes."""
+        while True:
+            # Create a custom dialog for entering hours and minutes
+            dialog = QtWidgets.QDialog(self)
+            dialog.setWindowTitle("Set Daily Limit")
+            dialog.setModal(True)
+
+            layout = QtWidgets.QVBoxLayout(dialog)
+
+            # Input fields for hours and minutes
+            hours_label = QtWidgets.QLabel("Enter hours:")
+            hours_input = QtWidgets.QSpinBox()
+            hours_input.setRange(0, 24)
+            hours_input.setValue(8)  # Default value
+
+            minutes_label = QtWidgets.QLabel("Enter minutes:")
+            minutes_input = QtWidgets.QSpinBox()
+            minutes_input.setRange(0, 59)
+            minutes_input.setValue(0)  # Default value
+
+            layout.addWidget(hours_label)
+            layout.addWidget(hours_input)
+            layout.addWidget(minutes_label)
+            layout.addWidget(minutes_input)
+
+            # OK and Cancel buttons
+            button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+            layout.addWidget(button_box)
+
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+
+            # Show the dialog
+            if dialog.exec_() == QtWidgets.QDialog.Accepted:
+                # Get the values from the input fields
+                hours = hours_input.value()
+                minutes = minutes_input.value()
+                if hours == 0 and minutes == 0:
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Invalid Input",
+                        "You must set a daily limit greater than 0."
+                    )
+                    continue
+                # Convert hours and minutes to seconds and return
+                return (hours * 3600) + (minutes * 60)
+            else:
+                # If the user cancels, show a warning and retry
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Daily Limit Required",
+                    "You must set a daily limit to proceed."
+                )
